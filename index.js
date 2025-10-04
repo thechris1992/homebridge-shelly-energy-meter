@@ -9,6 +9,43 @@ module.exports = function (homebridge) {
 	Characteristic = homebridge.hap.Characteristic;
 	Accessory = homebridge.platformAccessory;
 	UUIDGen = homebridge.hap.uuid;
+	var defaultFormats = {
+		BOOL: 'bool',
+		INT: 'int',
+		FLOAT: 'float',
+		STRING: 'string',
+		UINT8: 'uint8',
+		UINT16: 'uint16',
+		UINT32: 'uint32',
+		UINT64: 'uint64',
+		DATA: 'data',
+		TLV8: 'tlv8'
+	};
+	var defaultPerms = {
+		READ: 'pr',
+		WRITE: 'pw',
+		NOTIFY: 'ev',
+		HIDDEN: 'hd',
+		ADDITIONAL_AUTHORIZATION: 'aa',
+		TIMED_WRITE: 'tw',
+		WRITE_RESPONSE: 'wr'
+	};
+	if (!Characteristic.Formats) {
+		Characteristic.Formats = {};
+	}
+	Object.keys(defaultFormats).forEach(function (key) {
+		if (!Characteristic.Formats[key]) {
+			Characteristic.Formats[key] = defaultFormats[key];
+		}
+	});
+	if (!Characteristic.Perms) {
+		Characteristic.Perms = {};
+	}
+	Object.keys(defaultPerms).forEach(function (key) {
+		if (!Characteristic.Perms[key]) {
+			Characteristic.Perms[key] = defaultPerms[key];
+		}
+	});
 	FakeGatoHistoryService = require('fakegato-history')(homebridge);
 	homebridge.registerAccessory("homebridge-3em-energy-meter", "3EMEnergyMeter", EnergyMeter);
 }
@@ -27,8 +64,26 @@ function EnergyMeter (log, config) {
 	this.use_em_mode = config["use_em_mode"] || 0; 
 	this.negative_handling_mode = config["negative_handling_mode"] || 0; 	
 	this.use_pf = config["use_pf"] || false;
+	this.enable_consumption = config.hasOwnProperty('enable_consumption') ? config['enable_consumption'] : true;
+	this.enable_total_consumption = config.hasOwnProperty('enable_total_consumption') ? config['enable_total_consumption'] : true;
+	this.enable_voltage = config.hasOwnProperty('enable_voltage') ? config['enable_voltage'] : true;
+	this.enable_ampere = config.hasOwnProperty('enable_ampere') ? config['enable_ampere'] : true;
 	this.debug_log = config["debug_log"] || false;
 	this.serial = config.serial || "9000000";
+
+	// hap enums (fallback für neue Homebridge-Versionen ohne statische Eigenschaften)
+	const Formats = (Characteristic && Characteristic.Formats) ? Characteristic.Formats : {
+		UINT16: 'uint16',
+		FLOAT: 'float'
+	};
+	const Perms = (Characteristic && Characteristic.Perms) ? Characteristic.Perms : {
+		READ: 'pr',
+		NOTIFY: 'ev'
+	};
+
+	if (!Characteristic || !Characteristic.Formats || !Characteristic.Perms) {
+		this.log && this.log('WARN: Homebridge Characteristic metadata missing. Using fallback constants.');
+	}
 
 	// internal variables
 	this.waiting_response = false;
@@ -40,81 +95,90 @@ function EnergyMeter (log, config) {
 	this.pf1 = 1;
 	this.pf2 = 1;
 
-	var EvePowerConsumption = function () {
-		Characteristic.call(this, 'Consumption', 'E863F10D-079E-48FF-8F27-9C2605A29F52');
-		this.setProps({
-			format: Characteristic.Formats.UINT16,
-			unit: "Watts",
-			maxValue: 100000,
-			minValue: 0,
-			minStep: 1,
-			perms: [Characteristic.Perms.READ, Characteristic.Perms.NOTIFY]
-		});
-		this.value = this.getDefaultValue();
-	};
+	class EvePowerConsumption extends Characteristic {
+		constructor() {
+			super('Consumption', EvePowerConsumption.UUID);
+			this.setProps({
+				format: Formats.UINT16,
+				unit: "Watts",
+				maxValue: 100000,
+				minValue: 0,
+				minStep: 1,
+				perms: [Perms.READ, Perms.NOTIFY]
+			});
+			this.value = this.getDefaultValue();
+		}
+	}
 	EvePowerConsumption.UUID = 'E863F10D-079E-48FF-8F27-9C2605A29F52';
-	inherits(EvePowerConsumption, Characteristic);
 
-	var EveTotalConsumption = function () {
-		Characteristic.call(this, 'Energy', 'E863F10C-079E-48FF-8F27-9C2605A29F52');
-		this.setProps({
-			format: Characteristic.Formats.FLOAT,
-			unit: 'kWh',
-			maxValue: 1000000000,
-			minValue: 0,
-			minStep: 0.001,
-			perms: [Characteristic.Perms.READ, Characteristic.Perms.NOTIFY]
-		});
-		this.value = this.getDefaultValue();
-	};
+	class EveTotalConsumption extends Characteristic {
+		constructor() {
+			super('Energy', EveTotalConsumption.UUID);
+			this.setProps({
+				format: Formats.FLOAT,
+				unit: 'kWh',
+				maxValue: 1000000000,
+				minValue: 0,
+				minStep: 0.001,
+				perms: [Perms.READ, Perms.NOTIFY]
+			});
+			this.value = this.getDefaultValue();
+		}
+	}
 	EveTotalConsumption.UUID = 'E863F10C-079E-48FF-8F27-9C2605A29F52';
-	inherits(EveTotalConsumption, Characteristic);
 
-	var EveVoltage1 = function () {
-		Characteristic.call(this, 'Volt', 'E863F10A-079E-48FF-8F27-9C2605A29F52');
-		this.setProps({
-			format: Characteristic.Formats.FLOAT,
-			unit: 'Volt',
-			maxValue: 1000000000,
-			minValue: 0,
-			minStep: 0.001,
-			perms: [Characteristic.Perms.READ, Characteristic.Perms.NOTIFY]
-		});
-		this.value = this.getDefaultValue();
-	};
+	class EveVoltage1 extends Characteristic {
+		constructor() {
+			super('Volt', EveVoltage1.UUID);
+			this.setProps({
+				format: Formats.FLOAT,
+				unit: 'Volt',
+				maxValue: 1000000000,
+				minValue: 0,
+				minStep: 0.001,
+				perms: [Perms.READ, Perms.NOTIFY]
+			});
+			this.value = this.getDefaultValue();
+		}
+	}
 	EveVoltage1.UUID = 'E863F10A-079E-48FF-8F27-9C2605A29F52';
-	inherits(EveVoltage1, Characteristic);
 
-	var EveAmpere1 = function () {
-		Characteristic.call(this, 'Ampere', 'E863F126-079E-48FF-8F27-9C2605A29F52');
-		this.setProps({
-			format: Characteristic.Formats.FLOAT,
-			unit: 'Ampere',
-			maxValue: 1000000000,
-			minValue: 0,
-			minStep: 0.001,
-			perms: [Characteristic.Perms.READ, Characteristic.Perms.NOTIFY]
-		});
-		this.value = this.getDefaultValue();
-	};
+	class EveAmpere1 extends Characteristic {
+		constructor() {
+			super('Ampere', EveAmpere1.UUID);
+			this.setProps({
+				format: Formats.FLOAT,
+				unit: 'Ampere',
+				maxValue: 1000000000,
+				minValue: 0,
+				minStep: 0.001,
+				perms: [Perms.READ, Perms.NOTIFY]
+			});
+			this.value = this.getDefaultValue();
+		}
+	}
 	EveAmpere1.UUID = 'E863F126-079E-48FF-8F27-9C2605A29F52';
-	inherits(EveAmpere1, Characteristic);
 
-	var PowerMeterService = function (displayName, subtype) {
-		Service.call(this, displayName, '00000001-0000-1777-8000-775D67EC4377', subtype);
-		this.addCharacteristic(EvePowerConsumption);
-		this.addOptionalCharacteristic(EveTotalConsumption);
-		this.addOptionalCharacteristic(EveVoltage1);
-    this.addOptionalCharacteristic(EveAmpere1);
-	};
+	class PowerMeterService extends Service {
+		constructor(displayName, subtype) {
+			super(displayName, PowerMeterService.UUID, subtype);
+			this.addOptionalCharacteristic(EvePowerConsumption);
+			this.addOptionalCharacteristic(EveTotalConsumption);
+			this.addOptionalCharacteristic(EveVoltage1);
+			this.addOptionalCharacteristic(EveAmpere1);
+		}
+	}
 	PowerMeterService.UUID = '00000001-0000-1777-8000-775D67EC4377';
-	inherits(PowerMeterService, Service);
 
 	// local vars
 	this._EvePowerConsumption = EvePowerConsumption;
 	this._EveTotalConsumption = EveTotalConsumption;
 	this._EveVoltage1 = EveVoltage1;
   this._EveAmpere1 = EveAmpere1;
+	this._charPowerConsumption = null;
+	this._charTotalConsumption = null;
+	this._charVoltage1 = null;
+	this._charAmpere1 = null;
 
   // info
   this.informationService = new Service.AccessoryInformation();
@@ -126,10 +190,22 @@ function EnergyMeter (log, config) {
 
 	// construct service
 	this.service = new PowerMeterService(this.name);
-	this.service.getCharacteristic(this._EvePowerConsumption).on('get', this.getPowerConsumption.bind(this));
-	this.service.addCharacteristic(this._EveTotalConsumption).on('get', this.getTotalConsumption.bind(this));
-  this.service.addCharacteristic(this._EveVoltage1).on('get', this.getVoltage1.bind(this));
-  this.service.addCharacteristic(this._EveAmpere1).on('get', this.getAmpere1.bind(this));
+	if (this.enable_consumption) {
+		this._charPowerConsumption = this.service.addCharacteristic(this._EvePowerConsumption);
+		this._charPowerConsumption.on('get', this.getPowerConsumption.bind(this));
+	}
+	if (this.enable_total_consumption) {
+		this._charTotalConsumption = this.service.addCharacteristic(this._EveTotalConsumption);
+		this._charTotalConsumption.on('get', this.getTotalConsumption.bind(this));
+	}
+	if (this.enable_voltage) {
+		this._charVoltage1 = this.service.addCharacteristic(this._EveVoltage1);
+		this._charVoltage1.on('get', this.getVoltage1.bind(this));
+	}
+	if (this.enable_ampere) {
+		this._charAmpere1 = this.service.addCharacteristic(this._EveAmpere1);
+		this._charAmpere1.on('get', this.getAmpere1.bind(this));
+	}
 
   // add fakegato
   this.historyService = new FakeGatoHistoryService("energy", this,{storage:'fs'});
@@ -266,8 +342,7 @@ EnergyMeter.prototype.updateState = function () {
 				}
 			}
 			if (!error) {
-				
-				resolve(this.powerConsumption,this.totalPowerConsumption,this.voltage1,this.ampere1)
+					resolve(this.powerConsumption,this.totalPowerConsumption,this.voltage1,this.ampere1)
 			}
 			else {
 				reject(error);
@@ -276,16 +351,21 @@ EnergyMeter.prototype.updateState = function () {
 		});
 	})
 	.then((value_current, value_total, value_voltage1, value_ampere1) => {
-		if (value_current != null) {
-				this.service.getCharacteristic(this._EvePowerConsumption).setValue(value_current, undefined, undefined);
-				//FakeGato
-				this.historyService.addEntry({time: Math.round(new Date().valueOf() / 1000), power: value_current});}
-		if (value_total != null) {
-				this.service.getCharacteristic(this._EveTotalConsumption).setValue(value_total, undefined, undefined);}
-		if (value_voltage1 != null) {
-				this.service.getCharacteristic(this._EveVoltage1).setValue(value_voltage1, undefined, undefined);}
-		if (value_ampere1 != null) {
-				this.service.getCharacteristic(this._EveAmpere1).setValue(value_ampere1, undefined, undefined);}
+		if (value_current != null && this._charPowerConsumption) {
+				this._charPowerConsumption.setValue(value_current, undefined, undefined);
+				if (this.enable_consumption) {
+					this.historyService.addEntry({time: Math.round(new Date().valueOf() / 1000), power: value_current});
+				}
+		}
+		if (value_total != null && this._charTotalConsumption) {
+				this._charTotalConsumption.setValue(value_total, undefined, undefined);
+		}
+		if (value_voltage1 != null && this._charVoltage1) {
+				this._charVoltage1.setValue(value_voltage1, undefined, undefined);
+		}
+		if (value_ampere1 != null && this._charAmpere1) {
+				this._charAmpere1.setValue(value_ampere1, undefined, undefined);
+		}
 		return true;
 	}, (error) => {
 		return error;

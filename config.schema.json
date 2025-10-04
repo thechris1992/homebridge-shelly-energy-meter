@@ -85,6 +85,34 @@
         "type": "boolean",
         "default": false,
         "required": true
+        },
+        "enable_consumption": {
+        "title": "Enable Instant Consumption Characteristic",
+        "type": "boolean",
+        "default": true,
+        "required": true,
+        "description": "Disable to hide the Consumption characteristic."
+        },
+        "enable_total_consumption": {
+        "title": "Enable Total Consumption Characteristic",
+        "type": "boolean",
+        "default": true,
+        "required": true,
+        "description": "Disable to hide the Total Energy characteristic."
+        },
+        "enable_voltage": {
+        "title": "Enable Voltage Characteristic",
+        "type": "boolean",
+        "default": true,
+        "required": true,
+        "description": "Disable to hide the Voltage characteristic."
+        },
+        "enable_ampere": {
+        "title": "Enable Current Characteristic",
+        "type": "boolean",
+        "default": true,
+        "required": true,
+        "description": "Disable to hide the Current characteristic."
         },      
         "debug_log": {
         "title": "Enable Debug Logging",

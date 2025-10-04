@@ -1,5 +1,15 @@
 # Change Log
 
+
+## 1.1.4 (2025-10-03)
+
+### Changes
+
+* Added support for Homebridge V2
+* Added a selection for what Energy Data is show
+* updated dependencies
+
+
 ## 1.1.3 (2021-05-18)
 
 ### Changes

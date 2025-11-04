@@ -20,7 +20,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git://github.com/produdegr/homebridge-3em-energy-meter.git"
+    "url": "git://github.com/thechris1992/homebridge-3em-energy-meter.git"
   },
   "dependencies": {
     "request": "^2.5.0",
@@ -28,6 +28,6 @@
   },
   "funding": {
   "type" : "paypal",
-  "url" : "https://paypal.me/produdegr"
+  "url" : ""
   }
 }

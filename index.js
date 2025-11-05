@@ -47,11 +47,114 @@ module.exports = function (homebridge) {
 		}
 	});
 	FakeGatoHistoryService = require('fakegato-history')(homebridge);
-	homebridge.registerAccessory("homebridge-3em-energy-meter", "3EMEnergyMeter", EnergyMeter);
+	homebridge.registerPlatform("homebridge-3em-energy-meter", "3EMEnergyMeter", EnergyMeterPlatform);
 }
 
-function EnergyMeter (log, config) {
+function EnergyMeterPlatform(log, config, api) {
 	this.log = log;
+	this.config = config;
+	this.api = api;
+	this.accessories = [];
+
+	if (api) {
+		this.api.on('didFinishLaunching', this.didFinishLaunching.bind(this));
+	}
+}
+
+EnergyMeterPlatform.prototype.didFinishLaunching = function() {
+	this.log('DidFinishLaunching');
+	
+	// Entferne veraltete Accessories
+	this.api.unregisterPlatformAccessories('homebridge-3em-energy-meter', '3EMEnergyMeter', this.accessories);
+	this.accessories = [];
+
+	// Validiere Konfiguration
+	if (!this.config.devices) {
+		this.log.warn('No devices configured. Please add devices to your configuration.');
+		return;
+	}
+
+	if (!Array.isArray(this.config.devices)) {
+		this.log.error('Devices configuration must be an array.');
+		return;
+	}
+
+	if (this.config.devices.length === 0) {
+		this.log.warn('Devices array is empty. Please add at least one device.');
+		return;
+	}
+
+	// Erstelle Accessories für jedes konfigurierte Gerät
+	for (let i = 0; i < this.config.devices.length; i++) {
+		const device = this.config.devices[i];
+		
+		// Validiere erforderliche Felder
+		if (!device.name || !device.ip) {
+			this.log.error(`Device ${i + 1} is missing required fields (name or ip). Skipping.`);
+			continue;
+		}
+
+		// Validiere IP-Format (einfache Regex)
+		const ipRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
+		if (!ipRegex.test(device.ip)) {
+			this.log.error(`Device ${i + 1} has invalid IP address: ${device.ip}. Skipping.`);
+			continue;
+		}
+
+		try {
+			this.addAccessory(device, i);
+		} catch (error) {
+			this.log.error(`Failed to add device ${i + 1} (${device.name}): ${error.message}`);
+		}
+	}
+
+	this.log(`Successfully configured ${this.accessories.length} energy meter device(s).`);
+}
+
+EnergyMeterPlatform.prototype.addAccessory = function(deviceConfig, index) {
+	const name = deviceConfig.name || `Energy Meter ${index + 1}`;
+	
+	// Generiere eine eindeutige Seriennummer, falls keine angegeben
+	if (!deviceConfig.serial || deviceConfig.serial.trim() === '') {
+		deviceConfig.serial = `3EM-${deviceConfig.ip.replace(/\./g, '')}-${index}`;
+	}
+	
+	// Erstelle eindeutige UUID basierend auf Name, IP und Seriennummer
+	const uuid = UUIDGen.generate(`${name}-${deviceConfig.ip}-${deviceConfig.serial}`);
+	
+	this.log(`Creating accessory: ${name} (IP: ${deviceConfig.ip}, Serial: ${deviceConfig.serial})`);
+	
+	const accessory = new Accessory(name, uuid);
+	
+	// Setze das EnergyMeter-Objekt als context
+	accessory.context.deviceConfig = deviceConfig;
+	accessory.context.index = index;
+	
+	// Erstelle EnergyMeter-Instanz für dieses Accessory
+	const energyMeter = new EnergyMeter(this.log, deviceConfig, accessory);
+	accessory.energyMeter = energyMeter;
+	
+	// Konfiguriere das Accessory
+	this.configureAccessory(accessory);
+	
+	this.accessories.push(accessory);
+	this.api.registerPlatformAccessories('homebridge-3em-energy-meter', '3EMEnergyMeter', [accessory]);
+	
+	this.log(`Added accessory: ${name} with UUID: ${uuid}`);
+}
+
+EnergyMeterPlatform.prototype.configureAccessory = function(accessory) {
+	this.log(`Configuring accessory: ${accessory.displayName}`);
+	
+	// Falls das EnergyMeter-Objekt noch nicht existiert, erstelle es
+	if (!accessory.energyMeter && accessory.context.deviceConfig) {
+		accessory.energyMeter = new EnergyMeter(this.log, accessory.context.deviceConfig, accessory);
+	}
+}
+
+function EnergyMeter (log, config, accessory) {
+	this.log = log;
+	this.accessory = accessory || null;
 	this.ip = config["ip"] || "127.0.0.1";
 	this.url = "http://" + this.ip + "/status/emeters?";
 	this.auth = config["auth"];
@@ -70,6 +173,13 @@ function EnergyMeter (log, config) {
 	this.enable_ampere = config.hasOwnProperty('enable_ampere') ? config['enable_ampere'] : true;
 	this.debug_log = config["debug_log"] || false;
 	this.serial = config.serial || "9000000";
+
+	// Erweitere Log-Nachrichten mit Geräte-Identifikation
+	this.logPrefix = `[${this.name} - ${this.ip}]`;
+
+	if (this.debug_log) {
+		this.log(`${this.logPrefix} Initializing EnergyMeter with serial: ${this.serial}`);
+	}
 
 	// hap enums (fallback für neue Homebridge-Versionen ohne statische Eigenschaften)
 	const Formats = (Characteristic && Characteristic.Formats) ? Characteristic.Formats : {
@@ -180,40 +290,68 @@ function EnergyMeter (log, config) {
 	this._charVoltage1 = null;
 	this._charAmpere1 = null;
 
+	// Initialisiere Services
+	this.initServices();
+}
+
+EnergyMeter.prototype.initServices = function() {
   // info
-  this.informationService = new Service.AccessoryInformation();
-	this.informationService
-			.setCharacteristic(Characteristic.Manufacturer, "Shelly - produdegr")
-			.setCharacteristic(Characteristic.Model, "Shelly 3EM")
-			.setCharacteristic(Characteristic.FirmwareRevision, version)
-			.setCharacteristic(Characteristic.SerialNumber, this.serial);
+  this.informationService = this.accessory ? this.accessory.getService(Service.AccessoryInformation) : new Service.AccessoryInformation();
+	
+	if (this.informationService) {
+		this.informationService
+				.setCharacteristic(Characteristic.Manufacturer, "Shelly - produdegr")
+				.setCharacteristic(Characteristic.Model, "Shelly 3EM")
+				.setCharacteristic(Characteristic.FirmwareRevision, version)
+				.setCharacteristic(Characteristic.SerialNumber, this.serial);
+	}
 
 	// construct service
-	this.service = new PowerMeterService(this.name);
+	this.service = this.accessory ? this.accessory.getService(PowerMeterService) : new PowerMeterService(this.name);
+	
+	if (!this.service) {
+		this.service = new PowerMeterService(this.name);
+		if (this.accessory) {
+			this.accessory.addService(this.service);
+		}
+	}
+	
 	if (this.enable_consumption) {
-		this._charPowerConsumption = this.service.addCharacteristic(this._EvePowerConsumption);
+		this._charPowerConsumption = this.service.getCharacteristic(this._EvePowerConsumption) || this.service.addCharacteristic(this._EvePowerConsumption);
 		this._charPowerConsumption.on('get', this.getPowerConsumption.bind(this));
 	}
 	if (this.enable_total_consumption) {
-		this._charTotalConsumption = this.service.addCharacteristic(this._EveTotalConsumption);
+		this._charTotalConsumption = this.service.getCharacteristic(this._EveTotalConsumption) || this.service.addCharacteristic(this._EveTotalConsumption);
 		this._charTotalConsumption.on('get', this.getTotalConsumption.bind(this));
 	}
 	if (this.enable_voltage) {
-		this._charVoltage1 = this.service.addCharacteristic(this._EveVoltage1);
+		this._charVoltage1 = this.service.getCharacteristic(this._EveVoltage1) || this.service.addCharacteristic(this._EveVoltage1);
 		this._charVoltage1.on('get', this.getVoltage1.bind(this));
 	}
 	if (this.enable_ampere) {
-		this._charAmpere1 = this.service.addCharacteristic(this._EveAmpere1);
+		this._charAmpere1 = this.service.getCharacteristic(this._EveAmpere1) || this.service.addCharacteristic(this._EveAmpere1);
 		this._charAmpere1.on('get', this.getAmpere1.bind(this));
 	}
 
   // add fakegato
-  this.historyService = new FakeGatoHistoryService("energy", this,{storage:'fs'});
+  this.historyService = this.accessory ? this.accessory.getService(FakeGatoHistoryService) : new FakeGatoHistoryService("energy", this, {storage:'fs'});
+	
+	if (!this.accessory || !this.accessory.getService(FakeGatoHistoryService)) {
+		this.historyService = new FakeGatoHistoryService("energy", this, {storage:'fs'});
+		if (this.accessory) {
+			this.accessory.addService(this.historyService);
+		}
+	}
+
+	// Starte Update-Timer
+	if (this.update_interval > 0) {
+		this.timer = setInterval(this.updateState.bind(this), this.update_interval);
+	}
 }
 
 EnergyMeter.prototype.updateState = function () {
 	if (this.waiting_response) {
-		this.log('Please select a higher update_interval value. Http command may not finish!');
+		this.log(`${this.logPrefix} Please select a higher update_interval value. Http command may not finish!`);
 		return;
 	}
 	this.waiting_response = true;
@@ -223,7 +361,7 @@ EnergyMeter.prototype.updateState = function () {
 			method:		this.http_method,
 			timeout:	this.timeout
 		};
-		if (this.debug_log) { this.log('Requesting energy values from Shelly 3EM(EM) ...'); }
+		if (this.debug_log) { this.log(`${this.logPrefix} Requesting energy values from Shelly 3EM(EM) ...`); }
 		if (this.auth) {
 			ops.auth = {
 				user: this.auth.user,
@@ -233,7 +371,7 @@ EnergyMeter.prototype.updateState = function () {
 		request(ops, (error, res, body) => {
 			var json = null;
 			if (error) {
-				this.log('Bad http response! (' + ops.uri + '): ' + error.message);
+				this.log(`${this.logPrefix} Bad http response! (${ops.uri}): ${error.message}`);
 			}
 			else {
 				try {
@@ -334,10 +472,10 @@ EnergyMeter.prototype.updateState = function () {
 							
 							
 					
-					if (this.debug_log) { this.log('Successful http response. [ voltage: ' + this.voltage1.toFixed(0) + 'V, current: ' + this.ampere1.toFixed(1) + 'A, consumption: ' + this.powerConsumption.toFixed(0) + 'W, total consumption: ' + this.totalPowerConsumption.toFixed(2) + 'kWh ]'); }
+					if (this.debug_log) { this.log(`${this.logPrefix} Successful http response. [ voltage: ${this.voltage1.toFixed(0)}V, current: ${this.ampere1.toFixed(1)}A, consumption: ${this.powerConsumption.toFixed(0)}W, total consumption: ${this.totalPowerConsumption.toFixed(2)}kWh ]`); }
 				}
 				catch (parseErr) {
-					this.log('Error processing data: ' + parseErr.message);
+					this.log(`${this.logPrefix} Error processing data: ${parseErr.message}`);
 					error = parseErr;
 				}
 			}
@@ -389,9 +527,14 @@ EnergyMeter.prototype.getAmpere1 = function (callback) {
 };
 
 EnergyMeter.prototype.getServices = function () {
-	this.log("getServices: " + this.name);
-	if (this.update_interval > 0) {
-		this.timer = setInterval(this.updateState.bind(this), this.update_interval);
+	this.log(`${this.logPrefix} getServices called`);
+	
+	// Für Platform-Plugin wird diese Methode normalerweise nicht verwendet
+	// Services werden direkt über das Accessory verwaltet
+	if (this.accessory) {
+		return [];
 	}
+	
+	// Fallback für direkten Accessory-Modus (Rückwärtskompatibilität)
 	return [this.informationService, this.service, this.historyService];
 };

@@ -1,5 +1,58 @@
 # Change Log
 
+## 2.0.0 (2025-11-05)
+
+### 🚨 BREAKING CHANGES
+- **Plugin Type Change**: Converted from accessory plugin to platform plugin to support multiple devices
+- **Configuration Update Required**: Existing configurations must be migrated from `accessories` to `platforms` section
+
+### ✨ New Features
+- **Multiple Device Support**: Configure and monitor multiple Shelly 3EM/EM devices simultaneously
+- **Auto-Generated Serial Numbers**: Unique serials generated automatically based on device name and IP
+- **Enhanced Device Identification**: Improved logging with device-specific prefixes for better debugging
+- **Better Configuration Validation**: Comprehensive validation of device configurations with helpful error messages
+- **Flexible Device Options**: Each device can have individual settings and configurations
+
+### 🛠️ Improvements
+- **Enhanced Error Handling**: Better error messages and validation for individual devices
+- **Improved Logging**: Device-specific logging prefixes for easier troubleshooting in multi-device setups
+- **Configuration Schema**: Updated schema to support array of devices with proper validation
+- **UUID Generation**: Improved UUID generation for unique device identification
+- **Code Organization**: Better structured platform and accessory management
+
+### 📋 Migration Guide
+**Old Configuration (v1.x)**:
+```json
+{
+    "accessories": [
+        {
+            "accessory": "3EMEnergyMeter",
+            "name": "Energy Meter",
+            "ip": "192.168.1.100"
+        }
+    ]
+}
+```
+
+**New Configuration (v2.0)**:
+```json
+{
+    "platforms": [
+        {
+            "platform": "3EMEnergyMeter",
+            "name": "3EM Energy Meters",
+            "devices": [
+                {
+                    "name": "Energy Meter",
+                    "ip": "192.168.1.100"
+                }
+            ]
+        }
+    ]
+}
+```
+
+---
 
 ## 1.1.4 (2025-10-03)
 

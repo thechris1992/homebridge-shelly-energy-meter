@@ -1,37 +1,70 @@
 [![verified-by-homebridge](https://badgen.net/badge/homebridge/verified/purple)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 [![npm version](https://badge.fury.io/js/homebridge-3em-energy-meter.svg)](https://www.npmjs.com/package/homebridge-3em-energy-meter)
-[![Downloads](https://img.shields.io/npm/dt/homebridge-3em-energy-meter.svg)](https://www.npmjs.com/package/homebridge-3em-energy-meter)
 
-# Homebridge 3em Energy Meter
+# Homebridge 3EM Energy Meter Platform
 
-[Homebridge 3em Energy Meter](https://www.npmjs.com/package/homebridge-3em-energy-meter) is a plugin for [Homebridge](https://github.com/homebridge/homebridge) that implements Shelly 3EM energy metering functionality in Homekit.
+[Homebridge 3em Energy Meter](https://www.npmjs.com/package/homebridge-3em-energy-meter) is a platform plugin for [Homebridge](https://github.com/homebridge/homebridge) that implements Shelly 3EM energy metering functionality in Homekit. **Now supports multiple devices!**
 
-This plugin uses http requests to a Shelly 3EM (or EM*) device, making it possible to retain the native Shelly cloud statistics (which use MQTT) and at the same time allow you to monitor your energy consumption via Homekit. 
+This plugin uses HTTP requests to Shelly 3EM (or EM*) devices, making it possible to retain the native Shelly cloud statistics (which use MQTT) and at the same time allow you to monitor energy consumption from multiple devices via Homekit. 
 
-Please note that due to the fact that Apple does not support energy characteristics in Homekit, this plugin's accessory will only show values in the third-party homekit application "EVE".
+Please note that due to the fact that Apple does not support energy characteristics in Homekit, this plugin's accessories will only show values in the third-party homekit application "EVE".
 
-[![Status](screenshots/homebridge-3em-energy-meter-eve-app.png)]
+![Status](screenshots/homebridge-3em-energy-meter-eve-app.png)
 
-It will show in the EVE application the following values: Voltage (the average voltage of all 3 phases), Current (the accumulated Ampere of all 3 phases), Consumption (the accumulated Watts of all 3 phases) and the Total Consumption (the accumulated kWh of all 3 phases as calculated by Shelly API. Note in order to reset this value you must reset it in the Shelly app). A Total Cost and Projected Cost will show if you have specified the Energy Cost in the settings section of your EVE application. Total Consumption and Total Cost will feature the fakegato-history graph.
+## Features
+
+- **Multiple Device Support**: Configure and monitor multiple Shelly 3EM devices simultaneously
+- **Full Energy Monitoring**: Voltage, Current, Power Consumption, and Total Energy for each device
+- **Shelly EM Support**: Works with both Shelly 3EM and Shelly EM devices
+- **Flexible Configuration**: Extensive configuration options for each device
+- **History Support**: Integration with fakegato-history for historical data
+- **Authentication Support**: Works with password-protected devices
+- **Auto-Generated Serials**: Unique identification for each device
+
+Each device will show in the EVE application the following values:
+- **Voltage**: Average voltage of all phases (3EM) or single phase (EM)
+- **Current**: Accumulated amperage of all phases
+- **Consumption**: Current power consumption in Watts
+- **Total Consumption**: Accumulated energy in kWh (as calculated by Shelly API)
+
+Total Cost and Projected Cost will show if you have specified the Energy Cost in the settings section of your EVE application. Total Consumption and Total Cost will feature the fakegato-history graph.
 
 This application uses the cool fakegato plugin ([simont77/fakegato-history](https://github.com/simont77/fakegato-history)).
 
-Please also note that the sole purpose of this plugin is the energy metering feature of the Shelly 3em in order to monitor your 3 phase installation. The Shelly 3em features also an actuator (switch) which is not implemented in this plugin. If you need to use the switch in Homekit please use other plugins, like for example the very good homebridge-shelly ([alexryd/homebridge-shelly](https://github.com/alexryd/homebridge-shelly)) plugin.
+## Important Notes
 
-# Installation Instructions
+The sole purpose of this plugin is the energy metering feature of the Shelly 3EM in order to monitor your installations. The Shelly 3EM features also an actuator (switch) which is not implemented in this plugin. 
 
-You can easily install this plugin by using the superb [Homebridge Config UI X](https://www.npmjs.com/package/homebridge-config-ui-x). Search for "homebridge-3em-energy-meter" in the "Plugins" tab and install the plugin. After that fill out the configuration by using the "SETTINGS" link below the installed plugin.
+If you need to use the switch in Homekit please use other plugins, like for example:
+- homebridge-shelly (1st. gen) ([tritter/homebridge-shelly](https://github.com/tritter/homebridge-shelly))
+- homebridge-shelly-ds9 (plus & pro) ([cubi1337/homebridge-shelly-ds9](https://github.com/cubi1337/homebridge-shelly-ds9))
 
-Alternatively, can you install the plugin by 
+## Installation Instructions
 
-             npm install -g homebridge-3em-energy-meter
+You can install this plugin via the build in homebridge console:
 
-and then edit your Homebridge's config.json to include the following in the accessories section:
+```bash
+cd node_modules 
+git --git-dir=/dev/null clone --depth=1 https://github.com/thechris1992/homebridge-3em-energy-meter
+cd homebridge-3em-energy-meter && npm install
+```
 
+## Configuration
+
+⚠️ **Breaking Change**: This plugin has been converted from an accessory plugin to a platform plugin to support multiple devices. If you're upgrading from a previous version, you'll need to update your configuration.
+
+### Platform Configuration
+
+Edit your Homebridge's config.json to include the following in the platforms section:
+
+```json
+{
+    "platform": "3EMEnergyMeter",
+    "name": "3EM Energy Meters",
+    "devices": [
         {
-            "accessory": "3EMEnergyMeter",
-            "name": "Energy Meter",
-            "ip": "192.168.0.1",
+            "name": "Main House Meter",
+            "ip": "192.168.1.100",
             "auth": {
                 "user": "",
                 "pass": ""
@@ -42,23 +75,215 @@ and then edit your Homebridge's config.json to include the following in the acce
             "use_em_mode": 0,
             "negative_handling_mode": 0,
             "use_pf": false,
+            "enable_consumption": true,
+            "enable_total_consumption": true,
+            "enable_voltage": true,
+            "enable_ampere": true,
             "debug_log": false,
-            "serial": "123456789012345"             
+            "serial": ""
         },
+        {
+            "name": "Garage Meter",
+            "ip": "192.168.1.101",
+            "timeout": 5000,
+            "update_interval": 10000,
+            "use_em": false,
+            "debug_log": false
+        },
+        {
+            "name": "Solar Inverter Meter",
+            "ip": "192.168.1.102",
+            "use_em": true,
+            "use_em_mode": 0,
+            "negative_handling_mode": 1,
+            "debug_log": true
+        }
+    ]
+}
+```
 
-* "name"              			The Homekit Accessory Name.
-* "ip"                			The IP address of your Shelly 3EM.
-* "user" and "pass"   			If your Shelly 3EM local web page is password protected specify "user" and "pass".
-* "timeout"           			The http/get request timeout in msec. This timeout must the less than the "update_interval", default is 5000.
-* "update_interval"   			The interval for pulling values in msec. Must be greater than "timeout" setting, default is 10000.
-* "use_em"            			Use this plugin with a Shelly EM device.
-* "use_em_mode" 						Set the mode when use_em is true. Set to 0 to combine channel1 and channel2. Use 1,2 when single channels should be used,respectively.
-* "use_pf"            			Enables the Power Factor (pf) usage when calculating Total Ampere.
-* "negative_handling_mode"	Defines what happens with negative values. Set to 0 to zero them or 1 to show them as absolute values.
-* "debug_log"         			Enables the debug logging of the plugin, default is false.
-* "serial"            			This sets the published serialNumber of the accessory. It is required to use an unique serial for fakegato-history to work correctly.
+### Configuration Parameters
 
-Shelly EM functionality is beta, please use at own risk as I could not test it on a real EM device.
-The creator of this plugin is not affiliated in any way with [Shelly(Allterco)](https://shelly.cloud/) or [EVE](https://www.evehome.com/).
+#### Platform Level
+- **"platform"**: Must be `"3EMEnergyMeter"`
+- **"name"**: Name for the platform instance (shows in logs)
+- **"devices"**: Array of device configurations
 
-[![Support via PayPal](https://cdn.rawgit.com/twolfson/paypal-github-button/1.0.0/dist/button.svg)](https://www.paypal.me/produdegr/)
+#### Device Level
+- **"name"** (required): The Homekit Accessory Name for this device
+- **"ip"** (required): The IP address of your Shelly 3EM/EM device
+- **"auth"** (optional): Authentication if your device web page is password protected
+  - **"user"**: Username for device authentication
+  - **"pass"**: Password for device authentication
+- **"timeout"** (optional): HTTP request timeout in milliseconds (default: 5000)
+- **"update_interval"** (optional): Polling interval in milliseconds (default: 10000, must be > timeout)
+- **"use_em"** (optional): Set to `true` for Shelly EM devices (default: false)
+- **"use_em_mode"** (optional): Shelly EM channel mode (default: 0)
+  - `0`: Combine both channels
+  - `1`: Use only channel 1
+  - `2`: Use only channel 2
+- **"negative_handling_mode"** (optional): How to handle negative values (default: 0)
+  - `0`: Set negative values to zero
+  - `1`: Show absolute values
+- **"use_pf"** (optional): Use Power Factor when calculating amperage (default: false)
+- **"enable_consumption"** (optional): Show instant power consumption (default: true)
+- **"enable_total_consumption"** (optional): Show total energy consumption (default: true)
+- **"enable_voltage"** (optional): Show voltage readings (default: true)
+- **"enable_ampere"** (optional): Show current readings (default: true)
+- **"debug_log"** (optional): Enable detailed logging for this device (default: false)
+- **"serial"** (optional): Custom serial number (auto-generated if empty)
+
+### Migration from Accessory Plugin
+
+If you're upgrading from the old accessory-based version, change your configuration from:
+
+```json
+// OLD (Accessory)
+{
+    "accessories": [
+        {
+            "accessory": "3EMEnergyMeter",
+            "name": "Energy Meter",
+            "ip": "192.168.1.100",
+            // ... other settings
+        }
+    ]
+}
+```
+
+To:
+
+```json
+// NEW (Platform)
+{
+    "platforms": [
+        {
+            "platform": "3EMEnergyMeter",
+            "name": "3EM Energy Meters",
+            "devices": [
+                {
+                    "name": "Energy Meter",
+                    "ip": "192.168.1.100",
+                    // ... other settings
+                }
+            ]
+        }
+    ]
+}
+```
+
+## Usage Examples
+
+### Single 3EM Device (Basic)
+```json
+{
+    "platform": "3EMEnergyMeter",
+    "name": "Energy Monitoring",
+    "devices": [
+        {
+            "name": "House Energy Meter",
+            "ip": "192.168.1.100"
+        }
+    ]
+}
+```
+
+### Multiple 3EM Devices
+```json
+{
+    "platform": "3EMEnergyMeter",
+    "name": "Multi-Location Energy Monitoring",
+    "devices": [
+        {
+            "name": "Main House",
+            "ip": "192.168.1.100",
+            "debug_log": true
+        },
+        {
+            "name": "Guest House",
+            "ip": "192.168.1.101"
+        },
+        {
+            "name": "Workshop",
+            "ip": "192.168.1.102",
+            "update_interval": 15000
+        }
+    ]
+}
+```
+
+### Mixed 3EM and EM Devices
+```json
+{
+    "platform": "3EMEnergyMeter",
+    "name": "Energy Monitoring System",
+    "devices": [
+        {
+            "name": "Main Panel (3EM)",
+            "ip": "192.168.1.100",
+            "use_em": false
+        },
+        {
+            "name": "Solar Input (EM)",
+            "ip": "192.168.1.101",
+            "use_em": true,
+            "use_em_mode": 0,
+            "negative_handling_mode": 1
+        },
+        {
+            "name": "Heat Pump (EM Ch1)",
+            "ip": "192.168.1.102",
+            "use_em": true,
+            "use_em_mode": 1
+        }
+    ]
+}
+```
+
+### With Authentication
+```json
+{
+    "platform": "3EMEnergyMeter",
+    "name": "Secure Energy Monitoring",
+    "devices": [
+        {
+            "name": "Protected Meter",
+            "ip": "192.168.1.100",
+            "auth": {
+                "user": "admin",
+                "pass": "your-password"
+            }
+        }
+    ]
+}
+```
+
+## Troubleshooting
+
+1. **Device not showing up**: Check that IP address is correct and device is reachable
+2. **Authentication errors**: Verify username/password if device is protected
+3. **No data updates**: Ensure `update_interval` is greater than `timeout`
+4. **Multiple devices with same name**: Each device name should be unique
+5. **History not working**: Ensure each device has a unique serial number (auto-generated if not specified)
+
+## Notes
+
+- Shelly EM functionality is tested and supported
+- Serial numbers are auto-generated based on device name and IP if not specified
+- Each device operates independently with its own polling cycle
+- Debug logging can be enabled per device for troubleshooting
+- The creator of this plugin is not affiliated with [Shelly(Allterco)](https://shelly.cloud/) or [EVE](https://www.evehome.com/)
+
+## Changelog
+
+### v2.0.0
+- **Breaking Change**: Converted from accessory to platform plugin
+- Added support for multiple devices
+- Improved error handling and validation
+- Auto-generated unique serial numbers
+- Enhanced logging with device identification
+- Better configuration schema with validation
+
+### Previous Versions
+- Single device accessory support
+- Basic 3EM and EM functionality

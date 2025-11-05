@@ -5,20 +5,26 @@
 ### 🚨 BREAKING CHANGES
 - **Plugin Type Change**: Converted from accessory plugin to platform plugin to support multiple devices
 - **Configuration Update Required**: Existing configurations must be migrated from `accessories` to `platforms` section
+- **Removed Legacy Option**: `use_em` configuration option removed - use `device_type` instead
 
 ### ✨ New Features
 - **Multiple Device Support**: Configure and monitor multiple Shelly 3EM/EM devices simultaneously
+- **Fixed Phase Logic**: 3EM devices always use 3 phases, EM devices always use 2 phases (missing phases set to 0)
+- **Power Factor Support**: Optional power factor calculation for more accurate current measurement
+- **Characteristic Control**: Individual enable/disable options for consumption, voltage, current characteristics
 - **Auto-Generated Serial Numbers**: Unique serials generated automatically based on device name and IP
 - **Enhanced Device Identification**: Improved logging with device-specific prefixes for better debugging
 - **Better Configuration Validation**: Comprehensive validation of device configurations with helpful error messages
-- **Flexible Device Options**: Each device can have individual settings and configurations
+- **Modernized Dependencies**: Updated from deprecated `request` to `node-fetch` for better performance
 
 ### 🛠️ Improvements
+- **Robust Phase Handling**: No more "insufficient emeters" errors - missing phases automatically handled
 - **Enhanced Error Handling**: Better error messages and validation for individual devices
 - **Improved Logging**: Device-specific logging prefixes for easier troubleshooting in multi-device setups
-- **Configuration Schema**: Updated schema to support array of devices with proper validation
+- **Modern Code Architecture**: Complete code refactoring with async/await patterns
+- **Configuration Schema**: Enhanced UI schema with conditional fields and better validation
 - **UUID Generation**: Improved UUID generation for unique device identification
-- **Code Organization**: Better structured platform and accessory management
+- **Homebridge Config UI**: Better integration with configuration interface
 
 ### 📋 Migration Guide
 **Old Configuration (v1.x)**:
@@ -39,18 +45,43 @@
 {
     "platforms": [
         {
-            "platform": "3EMEnergyMeter",
-            "name": "3EM Energy Meters",
+            "platform": "ShellyEnergyMeter",
+            "name": "Energy Meters",
             "devices": [
                 {
-                    "name": "Energy Meter",
-                    "ip": "192.168.1.100"
+                    "name": "Main House Meter",
+                    "ip": "192.168.1.100",
+                    "device_type": "3EM"
+                },
+                {
+                    "name": "Solar Meter",
+                    "ip": "192.168.1.101",
+                    "device_type": "EM",
+                    "use_pf": true,
+                    "enable_voltage": false,
+                    "debug_log": true
                 }
             ]
         }
     ]
 }
 ```
+
+### 🔧 New Configuration Options
+- `device_type`: "3EM" (3 phases) or "EM" (2 phases)
+- `use_pf`: Enable power factor for current calculation
+- `enable_consumption`: Show/hide instant consumption characteristic
+- `enable_total_consumption`: Show/hide total energy characteristic  
+- `enable_voltage`: Show/hide voltage characteristic
+- `enable_ampere`: Show/hide current characteristic
+- `negative_handling_mode`: Handle negative values (0=zero, 1=absolute)
+
+### 🏗️ Technical Changes
+- **Dependency Updates**: Migrated from `request` to `node-fetch` (performance + security)
+- **Code Modernization**: Full refactoring with async/await patterns
+- **Phase Logic**: Fixed phase count per device type (no more flexible/broken phase detection)
+- **Error Handling**: Graceful handling of missing phases and network errors
+- **TypeScript Ready**: Better code structure for future TypeScript migration
 
 ---
 

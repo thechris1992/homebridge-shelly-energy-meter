@@ -1,540 +1,509 @@
-var inherits = require('util').inherits;
-var Service, Characteristic;
-var request = require('request');
-var FakeGatoHistoryService = require('fakegato-history');
-const version = require('./package.json').version;
+const fetch = require('node-fetch');
+const fakegatoHistory = require('fakegato-history');
+const { version } = require('./package.json');
+
+let Service, Characteristic, PlatformAccessory, FakeGatoHistoryService;
+const POWER_METER_SERVICE_UUID = '00000001-0000-1777-8000-775D67EC4377';
 
 module.exports = function (homebridge) {
 	Service = homebridge.hap.Service;
 	Characteristic = homebridge.hap.Characteristic;
-	Accessory = homebridge.platformAccessory;
-	UUIDGen = homebridge.hap.uuid;
-	var defaultFormats = {
-		BOOL: 'bool',
-		INT: 'int',
-		FLOAT: 'float',
-		STRING: 'string',
-		UINT8: 'uint8',
-		UINT16: 'uint16',
-		UINT32: 'uint32',
-		UINT64: 'uint64',
-		DATA: 'data',
-		TLV8: 'tlv8'
-	};
-	var defaultPerms = {
-		READ: 'pr',
-		WRITE: 'pw',
-		NOTIFY: 'ev',
-		HIDDEN: 'hd',
-		ADDITIONAL_AUTHORIZATION: 'aa',
-		TIMED_WRITE: 'tw',
-		WRITE_RESPONSE: 'wr'
-	};
-	if (!Characteristic.Formats) {
-		Characteristic.Formats = {};
-	}
-	Object.keys(defaultFormats).forEach(function (key) {
-		if (!Characteristic.Formats[key]) {
-			Characteristic.Formats[key] = defaultFormats[key];
-		}
-	});
-	if (!Characteristic.Perms) {
-		Characteristic.Perms = {};
-	}
-	Object.keys(defaultPerms).forEach(function (key) {
-		if (!Characteristic.Perms[key]) {
-			Characteristic.Perms[key] = defaultPerms[key];
-		}
-	});
-	FakeGatoHistoryService = require('fakegato-history')(homebridge);
-	homebridge.registerPlatform("homebridge-3em-energy-meter", "3EMEnergyMeter", EnergyMeterPlatform);
+	PlatformAccessory = homebridge.platformAccessory;
+
+	// Register Eve characteristics
+	registerEveCharacteristics();
+
+	// Initialize FakeGato with the homebridge instance
+	FakeGatoHistoryService = fakegatoHistory(homebridge);
+	
+	homebridge.registerPlatform("homebridge-shelly-energy-meter", "ShellyEnergyMeter", EnergyMeterPlatform);
 }
 
-function EnergyMeterPlatform(log, config, api) {
-	this.log = log;
-	this.config = config;
-	this.api = api;
-	this.accessories = [];
-
-	if (api) {
-		this.api.on('didFinishLaunching', this.didFinishLaunching.bind(this));
-	}
-}
-
-EnergyMeterPlatform.prototype.didFinishLaunching = function() {
-	this.log('DidFinishLaunching');
-	
-	// Entferne veraltete Accessories
-	this.api.unregisterPlatformAccessories('homebridge-3em-energy-meter', '3EMEnergyMeter', this.accessories);
-	this.accessories = [];
-
-	// Validiere Konfiguration
-	if (!this.config.devices) {
-		this.log.warn('No devices configured. Please add devices to your configuration.');
-		return;
-	}
-
-	if (!Array.isArray(this.config.devices)) {
-		this.log.error('Devices configuration must be an array.');
-		return;
-	}
-
-	if (this.config.devices.length === 0) {
-		this.log.warn('Devices array is empty. Please add at least one device.');
-		return;
-	}
-
-	// Erstelle Accessories für jedes konfigurierte Gerät
-	for (let i = 0; i < this.config.devices.length; i++) {
-		const device = this.config.devices[i];
-		
-		// Validiere erforderliche Felder
-		if (!device.name || !device.ip) {
-			this.log.error(`Device ${i + 1} is missing required fields (name or ip). Skipping.`);
-			continue;
-		}
-
-		// Validiere IP-Format (einfache Regex)
-		const ipRegex = /^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$/;
-		if (!ipRegex.test(device.ip)) {
-			this.log.error(`Device ${i + 1} has invalid IP address: ${device.ip}. Skipping.`);
-			continue;
-		}
-
-		try {
-			this.addAccessory(device, i);
-		} catch (error) {
-			this.log.error(`Failed to add device ${i + 1} (${device.name}): ${error.message}`);
-		}
-	}
-
-	this.log(`Successfully configured ${this.accessories.length} energy meter device(s).`);
-}
-
-EnergyMeterPlatform.prototype.addAccessory = function(deviceConfig, index) {
-	const name = deviceConfig.name || `Energy Meter ${index + 1}`;
-	
-	// Generiere eine eindeutige Seriennummer, falls keine angegeben
-	if (!deviceConfig.serial || deviceConfig.serial.trim() === '') {
-		deviceConfig.serial = `3EM-${deviceConfig.ip.replace(/\./g, '')}-${index}`;
-	}
-	
-	// Erstelle eindeutige UUID basierend auf Name, IP und Seriennummer
-	const uuid = UUIDGen.generate(`${name}-${deviceConfig.ip}-${deviceConfig.serial}`);
-	
-	this.log(`Creating accessory: ${name} (IP: ${deviceConfig.ip}, Serial: ${deviceConfig.serial})`);
-	
-	const accessory = new Accessory(name, uuid);
-	
-	// Setze das EnergyMeter-Objekt als context
-	accessory.context.deviceConfig = deviceConfig;
-	accessory.context.index = index;
-	
-	// Erstelle EnergyMeter-Instanz für dieses Accessory
-	const energyMeter = new EnergyMeter(this.log, deviceConfig, accessory);
-	accessory.energyMeter = energyMeter;
-	
-	// Konfiguriere das Accessory
-	this.configureAccessory(accessory);
-	
-	this.accessories.push(accessory);
-	this.api.registerPlatformAccessories('homebridge-3em-energy-meter', '3EMEnergyMeter', [accessory]);
-	
-	this.log(`Added accessory: ${name} with UUID: ${uuid}`);
-}
-
-EnergyMeterPlatform.prototype.configureAccessory = function(accessory) {
-	this.log(`Configuring accessory: ${accessory.displayName}`);
-	
-	// Falls das EnergyMeter-Objekt noch nicht existiert, erstelle es
-	if (!accessory.energyMeter && accessory.context.deviceConfig) {
-		accessory.energyMeter = new EnergyMeter(this.log, accessory.context.deviceConfig, accessory);
-	}
-}
-
-function EnergyMeter (log, config, accessory) {
-	this.log = log;
-	this.accessory = accessory || null;
-	this.ip = config["ip"] || "127.0.0.1";
-	this.url = "http://" + this.ip + "/status/emeters?";
-	this.auth = config["auth"];
-	this.name = config["name"];
-	this.displayName = config["name"];
-	this.timeout = config["timeout"] || 5000;
-	this.http_method = "GET";
-	this.update_interval = Number(config["update_interval"] || 10000);
-	this.use_em = config["use_em"] || false;
-	this.use_em_mode = config["use_em_mode"] || 0; 
-	this.negative_handling_mode = config["negative_handling_mode"] || 0; 	
-	this.use_pf = config["use_pf"] || false;
-	this.enable_consumption = config.hasOwnProperty('enable_consumption') ? config['enable_consumption'] : true;
-	this.enable_total_consumption = config.hasOwnProperty('enable_total_consumption') ? config['enable_total_consumption'] : true;
-	this.enable_voltage = config.hasOwnProperty('enable_voltage') ? config['enable_voltage'] : true;
-	this.enable_ampere = config.hasOwnProperty('enable_ampere') ? config['enable_ampere'] : true;
-	this.debug_log = config["debug_log"] || false;
-	this.serial = config.serial || "9000000";
-
-	// Erweitere Log-Nachrichten mit Geräte-Identifikation
-	this.logPrefix = `[${this.name} - ${this.ip}]`;
-
-	if (this.debug_log) {
-		this.log(`${this.logPrefix} Initializing EnergyMeter with serial: ${this.serial}`);
-	}
-
-	// hap enums (fallback für neue Homebridge-Versionen ohne statische Eigenschaften)
-	const Formats = (Characteristic && Characteristic.Formats) ? Characteristic.Formats : {
-		UINT16: 'uint16',
-		FLOAT: 'float'
-	};
-	const Perms = (Characteristic && Characteristic.Perms) ? Characteristic.Perms : {
-		READ: 'pr',
-		NOTIFY: 'ev'
-	};
-
-	if (!Characteristic || !Characteristic.Formats || !Characteristic.Perms) {
-		this.log && this.log('WARN: Homebridge Characteristic metadata missing. Using fallback constants.');
-	}
-
-	// internal variables
-	this.waiting_response = false;
-	this.powerConsumption = 0;
-	this.totalPowerConsumption = 0;
-	this.voltage1 = 0;
-	this.ampere1 = 0;
-	this.pf0 = 1;
-	this.pf1 = 1;
-	this.pf2 = 1;
-
-	class EvePowerConsumption extends Characteristic {
+function registerEveCharacteristics() {
+	// Eve Power Consumption (Watts)
+	global.EvePowerConsumption = class extends Characteristic {
 		constructor() {
-			super('Consumption', EvePowerConsumption.UUID);
+			super('Consumption', 'E863F10D-079E-48FF-8F27-9C2605A29F52');
 			this.setProps({
-				format: Formats.UINT16,
+				format: Characteristic.Formats.UINT16,
 				unit: "Watts",
 				maxValue: 100000,
 				minValue: 0,
 				minStep: 1,
-				perms: [Perms.READ, Perms.NOTIFY]
+				perms: [Characteristic.Perms.READ, Characteristic.Perms.NOTIFY]
 			});
 			this.value = this.getDefaultValue();
 		}
-	}
-	EvePowerConsumption.UUID = 'E863F10D-079E-48FF-8F27-9C2605A29F52';
+	};
+	global.EvePowerConsumption.UUID = 'E863F10D-079E-48FF-8F27-9C2605A29F52';
 
-	class EveTotalConsumption extends Characteristic {
+	// Eve Total Consumption (kWh)
+	global.EveTotalConsumption = class extends Characteristic {
 		constructor() {
-			super('Energy', EveTotalConsumption.UUID);
+			super('Energy', 'E863F10C-079E-48FF-8F27-9C2605A29F52');
 			this.setProps({
-				format: Formats.FLOAT,
+				format: Characteristic.Formats.FLOAT,
 				unit: 'kWh',
 				maxValue: 1000000000,
 				minValue: 0,
 				minStep: 0.001,
-				perms: [Perms.READ, Perms.NOTIFY]
+				perms: [Characteristic.Perms.READ, Characteristic.Perms.NOTIFY]
 			});
 			this.value = this.getDefaultValue();
 		}
-	}
-	EveTotalConsumption.UUID = 'E863F10C-079E-48FF-8F27-9C2605A29F52';
+	};
+	global.EveTotalConsumption.UUID = 'E863F10C-079E-48FF-8F27-9C2605A29F52';
 
-	class EveVoltage1 extends Characteristic {
+	// Eve Voltage
+	global.EveVoltage = class extends Characteristic {
 		constructor() {
-			super('Volt', EveVoltage1.UUID);
+			super('Volt', 'E863F10A-079E-48FF-8F27-9C2605A29F52');
 			this.setProps({
-				format: Formats.FLOAT,
+				format: Characteristic.Formats.FLOAT,
 				unit: 'Volt',
 				maxValue: 1000000000,
 				minValue: 0,
 				minStep: 0.001,
-				perms: [Perms.READ, Perms.NOTIFY]
+				perms: [Characteristic.Perms.READ, Characteristic.Perms.NOTIFY]
 			});
 			this.value = this.getDefaultValue();
 		}
-	}
-	EveVoltage1.UUID = 'E863F10A-079E-48FF-8F27-9C2605A29F52';
+	};
+	global.EveVoltage.UUID = 'E863F10A-079E-48FF-8F27-9C2605A29F52';
 
-	class EveAmpere1 extends Characteristic {
+	// Eve Current
+	global.EveAmpere = class extends Characteristic {
 		constructor() {
-			super('Ampere', EveAmpere1.UUID);
+			super('Ampere', 'E863F126-079E-48FF-8F27-9C2605A29F52');
 			this.setProps({
-				format: Formats.FLOAT,
+				format: Characteristic.Formats.FLOAT,
 				unit: 'Ampere',
 				maxValue: 1000000000,
 				minValue: 0,
 				minStep: 0.001,
-				perms: [Perms.READ, Perms.NOTIFY]
+				perms: [Characteristic.Perms.READ, Characteristic.Perms.NOTIFY]
 			});
 			this.value = this.getDefaultValue();
 		}
-	}
-	EveAmpere1.UUID = 'E863F126-079E-48FF-8F27-9C2605A29F52';
+	};
+	global.EveAmpere.UUID = 'E863F126-079E-48FF-8F27-9C2605A29F52';
 
-	class PowerMeterService extends Service {
+	// Eve Power Meter Service
+	global.PowerMeterService = class extends Service {
 		constructor(displayName, subtype) {
-			super(displayName, PowerMeterService.UUID, subtype);
-			this.addOptionalCharacteristic(EvePowerConsumption);
-			this.addOptionalCharacteristic(EveTotalConsumption);
-			this.addOptionalCharacteristic(EveVoltage1);
-			this.addOptionalCharacteristic(EveAmpere1);
+			super(displayName, POWER_METER_SERVICE_UUID, subtype);
+			this.addOptionalCharacteristic(global.EvePowerConsumption);
+			this.addOptionalCharacteristic(global.EveTotalConsumption);
+			this.addOptionalCharacteristic(global.EveVoltage);
+			this.addOptionalCharacteristic(global.EveAmpere);
 		}
-	}
-	PowerMeterService.UUID = '00000001-0000-1777-8000-775D67EC4377';
-
-	// local vars
-	this._EvePowerConsumption = EvePowerConsumption;
-	this._EveTotalConsumption = EveTotalConsumption;
-	this._EveVoltage1 = EveVoltage1;
-  this._EveAmpere1 = EveAmpere1;
-	this._charPowerConsumption = null;
-	this._charTotalConsumption = null;
-	this._charVoltage1 = null;
-	this._charAmpere1 = null;
-
-	// Initialisiere Services
-	this.initServices();
+	};
+	global.PowerMeterService.UUID = POWER_METER_SERVICE_UUID;
 }
 
-EnergyMeter.prototype.initServices = function() {
-  // info
-  this.informationService = this.accessory ? this.accessory.getService(Service.AccessoryInformation) : new Service.AccessoryInformation();
-	
-	if (this.informationService) {
-		this.informationService
-				.setCharacteristic(Characteristic.Manufacturer, "Shelly - produdegr")
-				.setCharacteristic(Characteristic.Model, "Shelly 3EM")
-				.setCharacteristic(Characteristic.FirmwareRevision, version)
-				.setCharacteristic(Characteristic.SerialNumber, this.serial);
-	}
+function EnergyMeterPlatform(log, config, api) {
+	this.log = log;
+	this.config = config || {};
+	this.api = api;
+	this.accessories = [];
 
-	// construct service
-	this.service = this.accessory ? this.accessory.getService(PowerMeterService) : new PowerMeterService(this.name);
-	
-	if (!this.service) {
-		this.service = new PowerMeterService(this.name);
-		if (this.accessory) {
-			this.accessory.addService(this.service);
-		}
-	}
-	
-	if (this.enable_consumption) {
-		this._charPowerConsumption = this.service.getCharacteristic(this._EvePowerConsumption) || this.service.addCharacteristic(this._EvePowerConsumption);
-		this._charPowerConsumption.on('get', this.getPowerConsumption.bind(this));
-	}
-	if (this.enable_total_consumption) {
-		this._charTotalConsumption = this.service.getCharacteristic(this._EveTotalConsumption) || this.service.addCharacteristic(this._EveTotalConsumption);
-		this._charTotalConsumption.on('get', this.getTotalConsumption.bind(this));
-	}
-	if (this.enable_voltage) {
-		this._charVoltage1 = this.service.getCharacteristic(this._EveVoltage1) || this.service.addCharacteristic(this._EveVoltage1);
-		this._charVoltage1.on('get', this.getVoltage1.bind(this));
-	}
-	if (this.enable_ampere) {
-		this._charAmpere1 = this.service.getCharacteristic(this._EveAmpere1) || this.service.addCharacteristic(this._EveAmpere1);
-		this._charAmpere1.on('get', this.getAmpere1.bind(this));
-	}
-
-  // add fakegato
-  this.historyService = this.accessory ? this.accessory.getService(FakeGatoHistoryService) : new FakeGatoHistoryService("energy", this, {storage:'fs'});
-	
-	if (!this.accessory || !this.accessory.getService(FakeGatoHistoryService)) {
-		this.historyService = new FakeGatoHistoryService("energy", this, {storage:'fs'});
-		if (this.accessory) {
-			this.accessory.addService(this.historyService);
-		}
-	}
-
-	// Starte Update-Timer
-	if (this.update_interval > 0) {
-		this.timer = setInterval(this.updateState.bind(this), this.update_interval);
-	}
-}
-
-EnergyMeter.prototype.updateState = function () {
-	if (this.waiting_response) {
-		this.log(`${this.logPrefix} Please select a higher update_interval value. Http command may not finish!`);
+	if (!this.config.devices || !Array.isArray(this.config.devices)) {
+		this.log.warn('No devices configured or invalid configuration');
 		return;
 	}
-	this.waiting_response = true;
-	this.last_value = new Promise((resolve, reject) => {
-		var ops = {
-			uri:		this.url,
-			method:		this.http_method,
-			timeout:	this.timeout
-		};
-		if (this.debug_log) { this.log(`${this.logPrefix} Requesting energy values from Shelly 3EM(EM) ...`); }
-		if (this.auth) {
-			ops.auth = {
-				user: this.auth.user,
-				pass: this.auth.pass
-			};
-		}
-		request(ops, (error, res, body) => {
-			var json = null;
-			if (error) {
-				this.log(`${this.logPrefix} Bad http response! (${ops.uri}): ${error.message}`);
-			}
-			else {
-				try {
-					json = JSON.parse(body);
-					
-					if ((this.use_pf) && (this.use_em==false)) {
-						this.pf0 = parseFloat(json.emeters[0].pf);
-						this.pf1 = parseFloat(json.emeters[1].pf);
-						this.pf2 = parseFloat(json.emeters[2].pf);
-					}
-					else {
-						this.pf0 = 1;
-						this.pf1 = 1;
-						this.pf2 = 1;
-					}
-					
-					if (this.use_em) {
-						
-						if (this.use_em_mode == 0) {
-					   if (this.negative_handling_mode == 0) {
-					   	this.powerConsumption = (parseFloat(json.emeters[0].power)+parseFloat(json.emeters[1].power));
-					    this.totalPowerConsumption = ((parseFloat(json.emeters[0].total)+parseFloat(json.emeters[1].total))/1000);
-					    this.voltage1 = (((parseFloat(json.emeters[0].voltage)+parseFloat(json.emeters[1].voltage))/2));
-				    	this.ampere1 = ((this.powerConsumption/this.voltage1));
-				    	if (this.powerConsumption < 0) { this.powerConsumption = 0 }
-				    	if (this.totalPowerConsumption < 0) { this.totalPowerConsumption = 0 }
-				    	if (this.voltage1 < 0) { this.voltage1 = 0 }
-				    	if (this.ampere1 < 0) { this.ampere1 = 0 }
-					  } else if (this.negative_handling_mode == 1) {
-					    this.powerConsumption = Math.abs(parseFloat(json.emeters[0].power)+parseFloat(json.emeters[1].power));
-					    this.totalPowerConsumption = Math.abs((parseFloat(json.emeters[0].total)+parseFloat(json.emeters[1].total))/1000);
-					    this.voltage1 = Math.abs(((parseFloat(json.emeters[0].voltage)+parseFloat(json.emeters[1].voltage))/2));
-				    	    this.ampere1 = Math.abs((this.powerConsumption/this.voltage1));
-				    	}
-						  	
-					  } else
-					  	{ if (this.use_em_mode == 1) {
-					        if (this.negative_handling_mode == 0) {
-					        this.powerConsumption = (parseFloat(json.emeters[0].power));
-					        this.totalPowerConsumption = (parseFloat(json.emeters[0].total)/1000);
-					        this.voltage1 = (parseFloat(json.emeters[0].voltage));
-				        	this.ampere1 = ((this.powerConsumption/this.voltage1));
-				    	    if (this.powerConsumption < 0) { this.powerConsumption = 0 }
-				    	    if (this.totalPowerConsumption < 0) { this.totalPowerConsumption = 0 }
-				    	    if (this.voltage1 < 0) { this.voltage1 = 0 }
-				    	    if (this.ampere1 < 0) { this.ampere1 = 0 }
-					        } else if (this.negative_handling_mode == 1) {
-					        this.powerConsumption = Math.abs(parseFloat(json.emeters[0].power));
-					        this.totalPowerConsumption = Math.abs(parseFloat(json.emeters[0].total)/1000);
-					        this.voltage1 = Math.abs(parseFloat(json.emeters[0].voltage));
-				        	this.ampere1 = Math.abs((this.powerConsumption/this.voltage1));
-				      }
-						  	
-					    } else 
-					      { if (this.use_em_mode == 2) {
-					        if (this.negative_handling_mode == 0) {
-					        this.powerConsumption = (parseFloat(json.emeters[1].power));
-					        this.totalPowerConsumption = (parseFloat(json.emeters[1].total)/1000);
-					        this.voltage1 = (parseFloat(json.emeters[1].voltage));
-				          this.ampere1 = ((this.powerConsumption/this.voltage1));
-				    	    if (this.powerConsumption < 0) { this.powerConsumption = 0 }
-				    	    if (this.totalPowerConsumption < 0) { this.totalPowerConsumption = 0 }
-				    	    if (this.voltage1 < 0) { this.voltage1 = 0 }
-				    	    if (this.ampere1 < 0) { this.ampere1 = 0 }
-					        } else if (this.negative_handling_mode == 1) {
-					          this.powerConsumption = Math.abs(parseFloat(json.emeters[1].power));
-					          this.totalPowerConsumption = Math.abs(parseFloat(json.emeters[1].total)/1000);
-					          this.voltage1 = Math.abs(parseFloat(json.emeters[1].voltage));
-				          	this.ampere1 = Math.abs((this.powerConsumption/this.voltage1));
-				          	}
-						  	
-					        }
-					        }	
-					  	} 
-						} 
-						else {
-						 			if (this.negative_handling_mode == 0) {
-				           this.powerConsumption = (parseFloat(json.emeters[0].power)+parseFloat(json.emeters[1].power)+parseFloat(json.emeters[2].power));
-				           this.totalPowerConsumption = ((parseFloat(json.emeters[0].total)+parseFloat(json.emeters[1].total)+parseFloat(json.emeters[2].total))/1000);
-			             this.voltage1 = (((parseFloat(json.emeters[0].voltage)+parseFloat(json.emeters[1].voltage)+parseFloat(json.emeters[2].voltage))/3));
-				           this.ampere1 = (((parseFloat(json.emeters[0].current)*this.pf0)
-					          +(parseFloat(json.emeters[1].current)*this.pf1)
-					          +(parseFloat(json.emeters[2].current)*this.pf2)));
-				    	    if (this.powerConsumption < 0) { this.powerConsumption = 0 }
-				    	    if (this.totalPowerConsumption < 0) { this.totalPowerConsumption = 0 }
-				    	    if (this.voltage1 < 0) { this.voltage1 = 0 }
-				    	    if (this.ampere1 < 0) { this.ampere1 = 0 }
-					        } else if (this.negative_handling_mode == 1) {	
-				             this.powerConsumption = Math.abs(parseFloat(json.emeters[0].power)+parseFloat(json.emeters[1].power)+parseFloat(json.emeters[2].power));
-				             this.totalPowerConsumption = Math.abs((parseFloat(json.emeters[0].total)+parseFloat(json.emeters[1].total)+parseFloat(json.emeters[2].total))/1000);
-			               this.voltage1 = Math.abs(((parseFloat(json.emeters[0].voltage)+parseFloat(json.emeters[1].voltage)+parseFloat(json.emeters[2].voltage))/3));
-				             this.ampere1 = Math.abs(((parseFloat(json.emeters[0].current)*this.pf0)
-					            +(parseFloat(json.emeters[1].current)*this.pf1)
-					            +(parseFloat(json.emeters[2].current)*this.pf2)));
-					          }
-							
-						}
-							
-							
-					
-					if (this.debug_log) { this.log(`${this.logPrefix} Successful http response. [ voltage: ${this.voltage1.toFixed(0)}V, current: ${this.ampere1.toFixed(1)}A, consumption: ${this.powerConsumption.toFixed(0)}W, total consumption: ${this.totalPowerConsumption.toFixed(2)}kWh ]`); }
-				}
-				catch (parseErr) {
-					this.log(`${this.logPrefix} Error processing data: ${parseErr.message}`);
-					error = parseErr;
-				}
-			}
-			if (!error) {
-					resolve(this.powerConsumption,this.totalPowerConsumption,this.voltage1,this.ampere1)
-			}
-			else {
-				reject(error);
-			}
-			this.waiting_response = false;
-		});
-	})
-	.then((value_current, value_total, value_voltage1, value_ampere1) => {
-		if (value_current != null && this._charPowerConsumption) {
-				this._charPowerConsumption.setValue(value_current, undefined, undefined);
-				if (this.enable_consumption) {
-					this.historyService.addEntry({time: Math.round(new Date().valueOf() / 1000), power: value_current});
-				}
-		}
-		if (value_total != null && this._charTotalConsumption) {
-				this._charTotalConsumption.setValue(value_total, undefined, undefined);
-		}
-		if (value_voltage1 != null && this._charVoltage1) {
-				this._charVoltage1.setValue(value_voltage1, undefined, undefined);
-		}
-		if (value_ampere1 != null && this._charAmpere1) {
-				this._charAmpere1.setValue(value_ampere1, undefined, undefined);
-		}
-		return true;
-	}, (error) => {
-		return error;
-	});
-};
 
-EnergyMeter.prototype.getPowerConsumption = function (callback) {
-	callback(null, this.powerConsumption);
-};
+	if (api) {
+		api.on('didFinishLaunching', () => this.discoverDevices());
+	}
+}
 
-EnergyMeter.prototype.getTotalConsumption = function (callback) {
-	callback(null, this.totalPowerConsumption);
-};
+EnergyMeterPlatform.prototype.configureAccessory = function(accessory) {
+	this.accessories.push(accessory);
+}
 
-EnergyMeter.prototype.getVoltage1 = function (callback) {
-	callback(null, this.voltage1);
-};
+EnergyMeterPlatform.prototype.discoverDevices = function() {
+	for (let i = 0; i < this.config.devices.length; i++) {
+		const device = this.config.devices[i];
+		
+		// Validate device config
+		if (!device.name || !device.ip) {
+			this.log.error(`Device ${i + 1} missing name or ip`);
+			continue;
+		}
 
-EnergyMeter.prototype.getAmpere1 = function (callback) {
-	callback(null, this.ampere1);
-};
+		const uuid = this.api.hap.uuid.generate(`${device.name}-${device.ip}`);
+		const existingAccessory = this.accessories.find(acc => acc.UUID === uuid);
 
-EnergyMeter.prototype.getServices = function () {
-	this.log(`${this.logPrefix} getServices called`);
+		if (existingAccessory) {
+			this.log.info(`Updating existing accessory: ${device.name}`);
+			existingAccessory.context.device = device;
+			new EnergyMeter(this.log, device, existingAccessory, this.api);
+			this.api.updatePlatformAccessories([existingAccessory]);
+		} else {
+			this.log.info(`Adding new accessory: ${device.name}`);
+			const accessory = new PlatformAccessory(device.name, uuid);
+			accessory.context.device = device;
+			new EnergyMeter(this.log, device, accessory, this.api);
+			this.api.registerPlatformAccessories('homebridge-shelly-energy-meter', 'ShellyEnergyMeter', [accessory]);
+			this.accessories.push(accessory);
+		}
+	}
+
+	// Remove obsolete accessories
+	const currentUUIDs = this.config.devices.map((device, i) => 
+		this.api.hap.uuid.generate(`${device.name}-${device.ip}`)
+	);
+	const obsoleteAccessories = this.accessories.filter(acc => !currentUUIDs.includes(acc.UUID));
 	
-	// Für Platform-Plugin wird diese Methode normalerweise nicht verwendet
-	// Services werden direkt über das Accessory verwaltet
-	if (this.accessory) {
-		return [];
+	if (obsoleteAccessories.length > 0) {
+		this.log.info(`Removing ${obsoleteAccessories.length} obsolete accessory(ies)`);
+		this.api.unregisterPlatformAccessories('homebridge-shelly-energy-meter', 'ShellyEnergyMeter', obsoleteAccessories);
+		this.accessories = this.accessories.filter(acc => currentUUIDs.includes(acc.UUID));
+	}
+}
+
+function EnergyMeter(log, config, accessory, api) {
+	this.log = log;
+	this.config = config;
+	this.accessory = accessory;
+	this.api = api;
+	this.name = config.name;
+	this.ip = config.ip;
+	this.updateInterval = config.update_interval || 10000;
+	this.timeout = config.timeout || 5000;
+	
+	// Device type determination
+	this.deviceType = config.device_type || '3EM'; // Default to 3EM if not specified
+	
+	// Fixed phase configuration based on device type
+	this.connectedPhases = this.deviceType === 'EM' ? 2 : 3;
+	this.enabledPhases = Array.from({length: this.connectedPhases}, (_, i) => i + 1);
+	
+	if (this.debugLog) {
+		this.log.info(`[${this.name}] Device: ${this.deviceType}, Fixed phases: ${this.connectedPhases} (${this.enabledPhases.join(', ')})`);
 	}
 	
-	// Fallback für direkten Accessory-Modus (Rückwärtskompatibilität)
-	return [this.informationService, this.service, this.historyService];
+	// EM specific configuration
+	this.emMode = config.use_em_mode || 0;
+	
+	this.auth = config.auth;
+	this.debugLog = config.debug_log || false;
+	
+	// New configuration options
+	this.usePowerFactor = config.use_pf || false;
+	this.enableConsumption = config.enable_consumption !== false; // Default true
+	this.enableTotalConsumption = config.enable_total_consumption !== false; // Default true
+	this.enableVoltage = config.enable_voltage !== false; // Default true
+	this.enableAmpere = config.enable_ampere !== false; // Default true
+	
+	// Current values
+	this.power = 0;
+	this.totalEnergy = 0;
+	this.voltage = 0;
+	this.current = 0;
+	
+	if (this.debugLog) {
+		this.log.info(`[${this.name}] Initialized ${this.deviceType} with ${this.connectedPhases} connected phase(s)`);
+	}
+	
+	this.setupServices();
+	this.startUpdating();
+}
+
+EnergyMeter.prototype.setupServices = function() {
+	// Information Service
+	const informationService = this.accessory.getService(Service.AccessoryInformation) ||
+		this.accessory.addService(Service.AccessoryInformation);
+	
+	informationService
+		.setCharacteristic(Characteristic.Manufacturer, "Shelly")
+		.setCharacteristic(Characteristic.Model, `Shelly ${this.deviceType}`)
+		.setCharacteristic(Characteristic.SerialNumber, this.config.serial || `${this.deviceType}-${this.ip.replace(/\./g, '')}`)
+		.setCharacteristic(Characteristic.FirmwareRevision, version);
+
+	// Power Meter Service - use device IP as unique subtype for persistence
+	const serviceSubtype = this.ip;
+	const existingService = (this.accessory.services || []).find(service =>
+		service && service.UUID === POWER_METER_SERVICE_UUID && service.subtype === serviceSubtype
+	);
+
+	if (existingService) {
+		this.service = existingService;
+		// Ensure name stays up to date when accessory name changes
+		this.service.displayName = this.name;
+		this.service.setCharacteristic(Characteristic.Name, this.name);
+		if (this.debugLog) {
+			this.log.info(`[${this.name}] Reusing existing PowerMeter service with subtype: ${serviceSubtype}`);
+		}
+	} else {
+		this.service = this.accessory.addService(global.PowerMeterService, this.name, serviceSubtype);
+		if (this.debugLog) {
+			this.log.info(`[${this.name}] Created new PowerMeter service with subtype: ${serviceSubtype}`);
+		}
+	}
+
+	// Clean up duplicate characteristics that may linger from previous versions
+	this.removeDuplicateCharacteristics();
+
+	// Clean up characteristics that are no longer needed
+	if (!this.enableConsumption) {
+		this.removeCharacteristicIfExists(global.EvePowerConsumption);
+	}
+	if (!this.enableTotalConsumption) {
+		this.removeCharacteristicIfExists(global.EveTotalConsumption);
+	}
+	if (!this.enableVoltage) {
+		this.removeCharacteristicIfExists(global.EveVoltage);
+	}
+	if (!this.enableAmpere) {
+		this.removeCharacteristicIfExists(global.EveAmpere);
+	}
+
+	// Add characteristics based on configuration
+	if (this.enableConsumption) {
+		this.powerChar = this.ensureCharacteristic(global.EvePowerConsumption);
+		this.powerChar.removeAllListeners('get');
+		this.powerChar.on('get', callback => callback(null, this.power));
+	}
+	
+	if (this.enableTotalConsumption) {
+		this.totalEnergyChar = this.ensureCharacteristic(global.EveTotalConsumption);
+		this.totalEnergyChar.removeAllListeners('get');
+		this.totalEnergyChar.on('get', callback => callback(null, this.totalEnergy));
+	}
+	
+	if (this.enableVoltage) {
+		this.voltageChar = this.ensureCharacteristic(global.EveVoltage);
+		this.voltageChar.removeAllListeners('get');
+		this.voltageChar.on('get', callback => callback(null, this.voltage));
+	}
+	
+	if (this.enableAmpere) {
+		this.currentChar = this.ensureCharacteristic(global.EveAmpere);
+		this.currentChar.removeAllListeners('get');
+		this.currentChar.on('get', callback => callback(null, this.current));
+	}
+
+	// Initialize history service for Eve app
+	this.setupHistory();
+}
+
+EnergyMeter.prototype.ensureCharacteristic = function(characteristicClass) {
+	const uuid = characteristicClass.UUID;
+	let characteristic = this.service.characteristics.find(char => char.UUID === uuid);
+	if (!characteristic) {
+		characteristic = this.service.addCharacteristic(characteristicClass);
+	}
+	return characteristic;
 };
+
+EnergyMeter.prototype.removeCharacteristicIfExists = function(characteristicClass) {
+	const uuid = characteristicClass.UUID;
+	const matches = this.service.characteristics.filter(char => char.UUID === uuid);
+	matches.forEach(char => this.service.removeCharacteristic(char));
+};
+
+EnergyMeter.prototype.removeDuplicateCharacteristics = function() {
+	const seen = new Map();
+	// clone array because we mutate characteristics during iteration
+	for (const char of [...this.service.characteristics]) {
+		if (!seen.has(char.UUID)) {
+			seen.set(char.UUID, char);
+			continue;
+		}
+		this.service.removeCharacteristic(char);
+		if (this.debugLog) {
+			this.log.info(`[${this.name}] Removed duplicate characteristic with UUID ${char.UUID}`);
+		}
+	}
+};
+
+EnergyMeter.prototype.setupHistory = function() {
+	if (!FakeGatoHistoryService) {
+		this.log.warn(`[${this.name}] History service unavailable - FakeGato not initialized`);
+		return;
+	}
+	// Initialize history service when first needed
+	if (this.historyService === undefined) {
+		try {
+			// Use setTimeout to delay initialization until all APIs are loaded
+			setTimeout(() => {
+				try {
+					this.historyService = new FakeGatoHistoryService("energy", this.accessory, {
+						storage: 'fs',
+						log: this.log
+					});
+					if (this.debugLog) {
+						this.log.info(`[${this.name}] History service initialized successfully`);
+					}
+				} catch (error) {
+					this.log.warn(`[${this.name}] Failed to initialize history service: ${error.message}`);
+					this.historyService = null;
+				}
+			}, 1000); // 1 second delay
+			
+			// Set to null temporarily to prevent multiple attempts
+			this.historyService = null;
+		} catch (error) {
+			this.log.warn(`[${this.name}] Failed to setup history service: ${error.message}`);
+			this.historyService = null;
+		}
+	}
+}
+
+EnergyMeter.prototype.startUpdating = function() {
+	if (this.updateInterval > 0) {
+		setInterval(() => this.updateValues(), this.updateInterval);
+		this.updateValues(); // Initial update
+	}
+}
+
+EnergyMeter.prototype.updateValues = async function() {
+	try {
+		const url = `http://${this.ip}/status/emeters`;
+		const options = {
+			method: 'GET',
+			timeout: this.timeout
+		};
+
+		if (this.auth) {
+			const auth = Buffer.from(`${this.auth.user}:${this.auth.pass}`).toString('base64');
+			options.headers = { 'Authorization': `Basic ${auth}` };
+		}
+
+		const response = await fetch(url, options);
+		if (!response.ok) {
+			throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+		}
+
+		const data = await response.json();
+		this.processData(data);
+
+	} catch (error) {
+		this.log.error(`[${this.name}] Update failed: ${error.message}`);
+	}
+}
+
+EnergyMeter.prototype.processData = function(data) {
+	if (!data.emeters || !Array.isArray(data.emeters)) {
+		this.log.error(`[${this.name}] Invalid data format`);
+		return;
+	}
+
+	const emeters = data.emeters;
+	const availablePhases = emeters.length;
+	
+	// Always use fixed phase count, missing phases will be 0
+	let power = 0, totalEnergy = 0, voltage = 0, current = 0;
+	let validPhases = 0;
+
+	if (this.deviceType === 'EM') {
+		// Shelly EM processing - always process 2 phases
+		switch (this.emMode) {
+			case 1: // Channel 1 only
+				const phase1 = emeters[0] || {};
+				power = this.safeFloat(phase1.power);
+				totalEnergy = this.safeFloat(phase1.total) / 1000;
+				voltage = this.safeFloat(phase1.voltage);
+				const pf1 = this.safeFloat(phase1.pf) || 1.0;
+				current = this.calculateCurrent(power, voltage, pf1);
+				validPhases = 1;
+				break;
+			case 2: // Channel 2 only
+				const phase2 = emeters[1] || {};
+				power = this.safeFloat(phase2.power);
+				totalEnergy = this.safeFloat(phase2.total) / 1000;
+				voltage = this.safeFloat(phase2.voltage);
+				const pf2 = this.safeFloat(phase2.pf) || 1.0;
+				current = this.calculateCurrent(power, voltage, pf2);
+				validPhases = 1;
+				break;
+			default: // Combined channels - always process both phases
+				let totalPowerFactor = 0;
+				for (let i = 0; i < 2; i++) { // Always 2 phases for EM
+					const phase = emeters[i] || {}; // Use empty object if phase missing
+					power += this.safeFloat(phase.power);
+					totalEnergy += this.safeFloat(phase.total);
+					voltage += this.safeFloat(phase.voltage);
+					totalPowerFactor += this.safeFloat(phase.pf) || 1.0;
+					validPhases++;
+				}
+				if (validPhases > 0) {
+					totalEnergy = totalEnergy / 1000;
+					voltage = voltage / validPhases; // Average voltage
+					const avgPowerFactor = totalPowerFactor / validPhases; // Average power factor
+					current = this.calculateCurrent(power, voltage, avgPowerFactor);
+				}
+		}
+	} else {
+		// Shelly 3EM processing - always process 3 phases
+		for (let i = 0; i < 3; i++) { // Always 3 phases for 3EM
+			const phase = emeters[i] || {}; // Use empty object if phase missing
+			power += this.safeFloat(phase.power);
+			totalEnergy += this.safeFloat(phase.total);
+			voltage += this.safeFloat(phase.voltage);
+			current += this.safeFloat(phase.current);
+			validPhases++;
+		}
+		// Calculate averages where appropriate
+		if (validPhases > 0) {
+			totalEnergy = totalEnergy / 1000; // Convert to kWh
+			voltage = voltage / validPhases; // Average voltage
+			// Power and current are already summed
+		}
+	}
+
+	// Handle negative values
+	if (this.config.negative_handling_mode === 1) {
+		power = Math.abs(power);
+		totalEnergy = Math.abs(totalEnergy);
+		voltage = Math.abs(voltage);
+		current = Math.abs(current);
+	} else {
+		power = Math.max(0, power);
+		totalEnergy = Math.max(0, totalEnergy);
+		voltage = Math.max(0, voltage);
+		current = Math.max(0, current);
+	}
+
+	// Update values
+	this.power = power;
+	this.totalEnergy = totalEnergy;
+	this.voltage = voltage;
+	this.current = current;
+
+	// Update characteristics (only if enabled)
+	if (this.powerChar) this.powerChar.updateValue(this.power);
+	if (this.totalEnergyChar) this.totalEnergyChar.updateValue(this.totalEnergy);
+	if (this.voltageChar) this.voltageChar.updateValue(this.voltage);
+	if (this.currentChar) this.currentChar.updateValue(this.current);
+
+	// Add to history (if available)
+	if (this.historyService) {
+		this.historyService.addEntry({
+			time: Math.round(Date.now() / 1000),
+			power: this.power
+		});
+	}
+
+	if (this.debugLog) {
+		this.log.info(`[${this.name}] Updated (${validPhases} phases): ${this.power}W, ${this.totalEnergy}kWh, ${this.voltage}V, ${this.current}A`);
+	}
+}
+
+EnergyMeter.prototype.safeFloat = function(value) {
+	const parsed = parseFloat(value);
+	return isNaN(parsed) ? 0 : parsed;
+}
+
+EnergyMeter.prototype.calculateCurrent = function(power, voltage, powerFactor = 1.0) {
+	if (voltage <= 0) return 0;
+	
+	if (this.usePowerFactor && powerFactor > 0) {
+		// I = P / (V * pf) - More accurate for AC with reactive loads
+		return power / (voltage * powerFactor);
+	} else {
+		// I = P / V - Simple calculation (resistive loads only)
+		return power / voltage;
+	}
+}

@@ -1,21 +1,20 @@
 {
-  "pluginAlias": "3EMEnergyMeter",
+  "pluginAlias": "ShellyEnergyMeter",
   "pluginType": "platform",
   "singular": false,
-  "headerDisplay": "Shelly 3EM Energy Meter Platform Plugin - Supports multiple devices",
-  "footerDisplay": "This platform will only be supported in the third-party Homekit app EVE.",
+  "headerDisplay": "Shelly 3EM/EM Energy Meter Platform - Fixed Phase Support",
+  "footerDisplay": "📱 Energy characteristics only visible in EVE app | 🔧 3EM uses 3 phases, EM uses 2 phases automatically",
   "schema": {
     "type": "object",
     "properties": {
       "name": {
         "title": "Platform Name",
         "type": "string",
-        "default": "3EM Energy Meters",
-        "required": true,
-        "description": "Name for this platform instance"
+        "default": "Shelly Energy Meters",
+        "required": true
       },
       "devices": {
-        "title": "3EM Energy Meter Devices",
+        "title": "Energy Meter Devices",
         "type": "array",
         "items": {
           "type": "object",
@@ -23,86 +22,58 @@
             "name": {
               "title": "Device Name",
               "type": "string",
-              "default": "Energy Meter",
               "required": true,
-              "description": "Display name for this energy meter device"
+              "description": "Display name for this device"
             },
             "ip": {
               "title": "IP Address",
               "type": "string",
-              "default": "127.0.0.1",
               "required": true,
               "format": "ipv4",
-              "description": "IP address of the Shelly 3EM device"
+              "description": "IP address of the Shelly device"
             },   
             "auth": {
-              "title": "Shelly 3EM Web Interface Authentication",
+              "title": "Authentication",
               "type": "object",
               "properties": {
-                  "user": {
-                    "title": "Username",
-                    "type": "string",
-                    "default": "",
-                    "required": false
-                  },
-                  "pass": {
-                    "title": "Password",
-                    "type": "string",
-                    "default": "",
-                    "required": false
-                  }
+                "user": {
+                  "title": "Username",
+                  "type": "string"
                 },
-              "description": "Optional authentication credentials"
+                "pass": {
+                  "title": "Password",
+                  "type": "string"
+                }
+              },
+              "description": "Optional authentication for protected devices"
             },
             "timeout": {
-              "title": "Request Timeout",
+              "title": "Timeout (ms)",
               "type": "integer",
               "default": 5000,
-              "required": true,
               "minimum": 1000,
-              "maximum": 30000,
-              "description": "HTTP request timeout in milliseconds"
+              "maximum": 30000
             },
             "update_interval": {
-              "title": "Update Interval",
+              "title": "Update Interval (ms)",
               "type": "integer",
               "default": 10000,
-              "required": true,
-              "minimum": 1000,
+              "minimum": 5000,
               "maximum": 60000,
-              "description": "Update Interval should be higher than Request Timeout (in milliseconds)."
+              "description": "Must be greater than timeout"
             },
-            "use_em": {
-              "title": "Use Shelly EM device.",
-              "type": "boolean",
-              "default": false,
-              "required": true,
-              "description": "Set this flag to true if you want to use this plugin with a Shelly EM device."
+            "device_type": {
+              "title": "📡 Device Type",
+              "type": "string",
+              "default": "3EM",
+              "enum": ["3EM", "EM"],
+              "description": "Shelly 3EM (3 phases) or Shelly EM (2 phases) - Missing phases will be set to 0"
             },
-            "use_em_mode": {
-              "title": "Shelly EM operating mode (0=combine,1=channel1,2=channel2)",
-              "type": "integer",
-              "default": 0,
-              "required": true,
-              "minimum": 0,
-              "maximum": 2,
-              "description": "Is used ONLY when 'use_em' is true."
-            }, 
-            "negative_handling_mode": {
-              "title": "Negative Values handling mode (0=zero Negative Values,1=absolute Negative Values)",
-              "type": "integer",
-              "default": 0,
-              "required": true,
-              "minimum": 0,
-              "maximum": 1,
-              "description": "Defines how negative values are handled (power return etc.)."
-            },       
             "use_pf": {
               "title": "Use Power Factor (pf) when calculating Total Ampere",
               "type": "boolean",
               "default": false,
-              "required": true,
-              "description": "Enable power factor calculation for amperage"
+              "required": true
             },
             "enable_consumption": {
               "title": "Enable Instant Consumption Characteristic",
@@ -131,27 +102,40 @@
               "default": true,
               "required": true,
               "description": "Disable to hide the Current characteristic."
-            },      
+            },
+            "use_em_mode": {
+              "title": "📊 EM Channel Mode",
+              "type": "integer",
+              "default": 0,
+              "minimum": 0,
+              "maximum": 2,
+              "description": "0=combine all channels, 1=channel 1 only, 2=channel 2 only (EM only)",
+              "condition": {
+                "functionBody": "return model.device_type === 'EM';"
+              }
+            }, 
+            "negative_handling_mode": {
+              "title": "Negative Values",
+              "type": "integer",
+              "default": 0,
+              "minimum": 0,
+              "maximum": 1,
+              "description": "0=set to zero, 1=show absolute value"
+            },
             "debug_log": {
-              "title": "Enable Debug Logging",
+              "title": "Debug Logging",
               "type": "boolean",
               "default": false,
-              "required": true,
               "description": "Enable detailed logging for this device"
             },
             "serial": {
-              "title": "Shelly 3EM Device Serial",
+              "title": "Serial Number",
               "type": "string",
-              "default": "",
-              "required": false,
-              "minLength": 5,
-              "maxLength": 20,
-              "description": "Unique serial number for this device. Leave empty to auto-generate based on IP and name."
+              "description": "Custom serial (auto-generated if empty)"
             }
           },
           "required": ["name", "ip"]
-        },
-        "description": "Array of Shelly 3EM energy meter devices to configure"
+        }
       }
     },
     "required": ["name", "devices"]

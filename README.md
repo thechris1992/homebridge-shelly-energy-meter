@@ -1,4 +1,4 @@
-# Homebridge 3EM Energy Meter Platform
+# Homebridge Shelly Energy Meter Platform
 
 [![verified-by-homebridge](https://badgen.net/badge/homebridge/verified/purple)](https://github.com/homebridge/homebridge/wiki/Verified-Plugins)
 [![npm version](https://badge.fury.io/js/homebridge-3em-energy-meter.svg)](https://www.npmjs.com/package/homebridge-3em-energy-meter)
@@ -24,7 +24,7 @@ npm install thechris1992/homebridge-shelly-energy-meter
 
 ### Install a branch #... with Debug Output
 ```bash
-npm install thechris1992/homebridge-shelly-energy-meter#feature/plattform --install-strategy shallow --loglevel verbose
+npm install thechris1992/homebridge-shelly-energy-meter --install-strategy shallow --loglevel verbose
 ```
 
 **Note**: After installation, restart Homebridge to load the plugin.
